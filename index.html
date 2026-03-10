@@ -402,14 +402,42 @@
           </div>
 
           <div style="display:flex;flex-direction:column;gap:10px;">
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
-              <input type="checkbox" id="nullSafety" checked style="accent-color:var(--accent);width:16px;height:16px;">
-              Nullable optional fields (<span style="color:var(--accent);font-family:monospace">?</span>)
-            </label>
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
-              <input type="checkbox" id="addDefaults" checked style="accent-color:var(--accent);width:16px;height:16px;">
-              Add <span style="color:var(--accent);font-family:monospace">@Default</span> for lists
-            </label>
+
+            <!-- Null Strategy -->
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Null Handling Strategy</label>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;background:var(--surface2);padding:8px 12px;border-radius:8px;border:1px solid var(--border);">
+                  <input type="radio" name="nullStrategy" value="all_nullable" style="accent-color:var(--accent);">
+                  <div>
+                    <div style="color:var(--text);">All fields nullable <span style="color:var(--accent);font-family:monospace">String?</span></div>
+                    <div style="font-size:11px;color:var(--muted);font-family:monospace;">Best for real APIs — handles missing fields</div>
+                  </div>
+                </label>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;background:var(--surface2);padding:8px 12px;border-radius:8px;border:1px solid var(--border);">
+                  <input type="radio" name="nullStrategy" value="required" checked style="accent-color:var(--accent);">
+                  <div>
+                    <div style="color:var(--text);">All fields required <span style="color:var(--accent);font-family:monospace">required</span></div>
+                    <div style="font-size:11px;color:var(--muted);font-family:monospace;">Strict — crash if field missing</div>
+                  </div>
+                </label>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;background:var(--surface2);padding:8px 12px;border-radius:8px;border:1px solid var(--border);">
+                  <input type="radio" name="nullStrategy" value="default_values" style="accent-color:var(--accent);">
+                  <div>
+                    <div style="color:var(--text);">All fields with <span style="color:var(--accent);font-family:monospace">@Default</span></div>
+                    <div style="font-size:11px;color:var(--muted);font-family:monospace;">Safe defaults — never null, never crash</div>
+                  </div>
+                </label>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;background:var(--surface2);padding:8px 12px;border-radius:8px;border:1px solid var(--border);">
+                  <input type="radio" name="nullStrategy" value="smart" style="accent-color:var(--accent);">
+                  <div>
+                    <div style="color:var(--text);">Smart mixed <span style="color:var(--accent);font-family:monospace">required + ?</span></div>
+                    <div style="font-size:11px;color:var(--muted);font-family:monospace;">Lists @Default, nulls ?, rest required</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
               <input type="checkbox" id="addComments" checked style="accent-color:var(--accent);width:16px;height:16px;">
               Add field comments
@@ -427,6 +455,7 @@
             <div>&nbsp;&nbsp;json_serializable: ^6.13.0</div>
             <div>&nbsp;&nbsp;build_runner: ^2.12.2</div>
           </div>
+
         </div>
       </div>
     </div>
@@ -455,7 +484,11 @@
   <!-- Output -->
   <div id="outputSection" class="output-section" style="display:none;">
     <div class="section-title">
-      <span>🎯 Generated Files</span>
+      <span>🎯 Generated Files
+        <span id="strategyBadge" style="display:none;margin-left:12px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);color:var(--accent);font-family:'JetBrains Mono',monospace;font-size:10px;padding:3px 10px;border-radius:20px;letter-spacing:1px;" id="strategyBadge">
+          <span id="strategyLabel"></span>
+        </span>
+      </span>
       <button class="copy-all-btn" onclick="copyAll()">📋 Copy All</button>
     </div>
     <div id="filesGrid" class="files-grid"></div>
@@ -528,9 +561,13 @@ function clearAll() {
   document.getElementById('filesGrid').innerHTML = '';
 }
 
-// ─── Type Detection ───────────────────────────────────────────────────────────
-function getDartType(value, key, nullSafety) {
-  if (value === null) return nullSafety ? 'String?' : 'String';
+function getNullStrategy() {
+  return document.querySelector('input[name="nullStrategy"]:checked').value;
+}
+
+// ─── Base Type (without null) ─────────────────────────────────────────────────
+function getBaseType(value, key) {
+  if (value === null || value === undefined) return 'String';
   if (typeof value === 'boolean') return 'bool';
   if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'double';
   if (typeof value === 'string') return 'String';
@@ -548,6 +585,91 @@ function getDartType(value, key, nullSafety) {
   }
   if (typeof value === 'object') return toPascalCase(key);
   return 'dynamic';
+}
+
+// ─── Default value for a type ─────────────────────────────────────────────────
+function getDefaultValue(baseType, value) {
+  if (baseType.startsWith('List')) return '[]';
+  if (baseType === 'bool') return 'false';
+  if (baseType === 'int') return '0';
+  if (baseType === 'double') return '0.0';
+  if (baseType === 'String') return "''";
+  // for nested objects — can't use @Default, use nullable instead
+  return null;
+}
+
+// ─── Field builder based on strategy ─────────────────────────────────────────
+function buildField(key, value, strategy, addComments) {
+  const camelKey = toCamelCase(key);
+  const baseType = getBaseType(value, key);
+  const isArray = Array.isArray(value);
+  const isObject = typeof value === 'object' && value !== null && !isArray;
+  const isNull = value === null || value === undefined;
+  const jsonKey = key !== camelKey ? `@JsonKey(name: '${key}') ` : '';
+  const comment = addComments
+    ? `    // "${key}" → ${JSON.stringify(value).substring(0, 50)}${JSON.stringify(value).length > 50 ? '...' : ''}`
+    : null;
+
+  let prefix = '';
+  let dartType = baseType;
+
+  switch (strategy) {
+
+    // ── All fields nullable ──────────────────────────────────────────────────
+    case 'all_nullable':
+      if (isArray) {
+        // lists — nullable list
+        dartType = baseType + '?';
+        prefix = '';
+      } else if (isObject) {
+        // nested objects — nullable
+        dartType = baseType + '?';
+        prefix = '';
+      } else {
+        dartType = baseType + '?';
+        prefix = '';
+      }
+      break;
+
+    // ── All required ─────────────────────────────────────────────────────────
+    case 'required':
+      dartType = baseType;
+      prefix = 'required ';
+      break;
+
+    // ── All @Default ─────────────────────────────────────────────────────────
+    case 'default_values':
+      const defVal = getDefaultValue(baseType, value);
+      if (defVal !== null) {
+        dartType = baseType;
+        prefix = `@Default(${defVal}) `;
+      } else {
+        // nested object — can't default, use nullable
+        dartType = baseType + '?';
+        prefix = '';
+      }
+      break;
+
+    // ── Smart: lists→@Default, null→?, rest→required ─────────────────────────
+    case 'smart':
+    default:
+      if (isNull) {
+        dartType = baseType + '?';
+        prefix = '';
+      } else if (isArray) {
+        dartType = baseType;
+        prefix = `@Default([]) `;
+      } else if (isObject) {
+        dartType = baseType + '?';
+        prefix = '';
+      } else {
+        dartType = baseType;
+        prefix = 'required ';
+      }
+      break;
+  }
+
+  return { camelKey, dartType, prefix, jsonKey, comment, originalKey: key };
 }
 
 function toPascalCase(str) {
@@ -570,10 +692,10 @@ function toSnakeCase(str) {
 }
 
 // ─── Model Collector ──────────────────────────────────────────────────────────
-function collectModels(obj, className, models, nullSafety, addDefaults, addComments) {
+function collectModels(obj, className, models, strategy, addComments) {
   if (Array.isArray(obj)) {
     if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
-      collectModels(obj[0], className, models, nullSafety, addDefaults, addComments);
+      collectModels(obj[0], className, models, strategy, addComments);
     }
     return;
   }
@@ -585,40 +707,25 @@ function collectModels(obj, className, models, nullSafety, addDefaults, addComme
   let totalFields = 0;
 
   for (const [key, value] of Object.entries(obj)) {
-    const camelKey = toCamelCase(key);
-    let dartType = getDartType(value, key, nullSafety);
     totalFields++;
 
-    // collect nested models
+    // collect nested models first
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       const nestedClass = toPascalCase(key);
       imports.add(nestedClass);
-      collectModels(value, nestedClass, models, nullSafety, addDefaults, addComments);
+      collectModels(value, nestedClass, models, strategy, addComments);
     }
 
     if (Array.isArray(value) && value.length > 0 &&
         typeof value[0] === 'object' && value[0] !== null) {
       const itemClass = toPascalCase(key.endsWith('s') ? key.slice(0, -1) : key);
       imports.add(itemClass);
-      collectModels(value[0], itemClass, models, nullSafety, addDefaults, addComments);
+      collectModels(value[0], itemClass, models, strategy, addComments);
     }
 
-    // json key annotation if different
-    const jsonKey = key !== camelKey ? `@JsonKey(name: '${key}') ` : '';
-
-    // required or default
-    let prefix = 'required ';
-    if (addDefaults && Array.isArray(value)) {
-      prefix = '@Default([]) ';
-      dartType = dartType; // keep List<X>
-    } else if (nullSafety && value === null) {
-      prefix = '';
-      dartType = dartType.endsWith('?') ? dartType : dartType + '?';
-    }
-
-    const comment = addComments ? `// ${key}: ${JSON.stringify(value).substring(0, 40)}${JSON.stringify(value).length > 40 ? '...' : ''}` : null;
-
-    fields.push({ key: camelKey, originalKey: key, dartType, prefix, jsonKey, comment });
+    // build field with strategy
+    const field = buildField(key, value, strategy, addComments);
+    fields.push(field);
   }
 
   if (!models.find(m => m.className === className)) {
@@ -627,33 +734,26 @@ function collectModels(obj, className, models, nullSafety, addDefaults, addComme
 }
 
 // ─── Code Generator ───────────────────────────────────────────────────────────
-function generateModel(model, allModels, importPath) {
+function generateModel(model) {
   const { className, fields, imports } = model;
   const fileName = toSnakeCase(className);
 
-  // imports
-  let importLines = `import 'package:freezed_annotation/freezed_annotation.dart';\n`;
+  const importLines = [
+    `import 'package:freezed_annotation/freezed_annotation.dart';`,
+    ...imports.map(imp => `import '${toSnakeCase(imp)}.dart';`),
+    ``,
+    `part '${fileName}.freezed.dart';`,
+    `part '${fileName}.g.dart';`,
+  ].join('\n');
 
-  // import nested models
-  imports.forEach(imp => {
-    const impFile = toSnakeCase(imp);
-    importLines += `import '${impFile}.dart';\n`;
-  });
-
-  importLines += `\npart '${fileName}.freezed.dart';\npart '${fileName}.g.dart';`;
-
-  // fields
   const fieldLines = fields.map(f => {
-    let line = '';
-    if (f.comment) line += `    // ${f.originalKey}\n`;
-    line += `    ${f.prefix}${f.jsonKey}${f.dartType} ${f.key},`;
-    return line;
+    let lines = '';
+    if (f.comment) lines += `${f.comment}\n`;
+    lines += `    ${f.prefix}${f.jsonKey}${f.dartType} ${f.camelKey},`;
+    return lines;
   }).join('\n');
 
-  return `import 'package:freezed_annotation/freezed_annotation.dart';
-${imports.length > 0 ? imports.map(imp => `import '${toSnakeCase(imp)}.dart';`).join('\n') + '\n' : ''}
-part '${fileName}.freezed.dart';
-part '${fileName}.g.dart';
+  return `${importLines}
 
 @freezed
 class ${className} with _\$${className} {
@@ -670,9 +770,7 @@ ${fieldLines}
 function generate() {
   const input = document.getElementById('jsonInput').value.trim();
   const rootName = document.getElementById('rootName').value.trim() || 'ApiResponse';
-  const importPath = document.getElementById('importPath').value.trim();
-  const nullSafety = document.getElementById('nullSafety').checked;
-  const addDefaults = document.getElementById('addDefaults').checked;
+  const strategy = getNullStrategy();
   const addComments = document.getElementById('addComments').checked;
 
   const errorBox = document.getElementById('errorBox');
@@ -694,7 +792,7 @@ function generate() {
   }
 
   const models = [];
-  collectModels(json, rootName, models, nullSafety, addDefaults, addComments);
+  collectModels(json, rootName, models, strategy, addComments);
 
   if (models.length === 0) {
     errorBox.textContent = '❌ No models could be generated from this JSON.';
@@ -709,22 +807,39 @@ function generate() {
   document.getElementById('statFields').textContent = totalFields;
   document.getElementById('statsBar').style.display = 'flex';
 
+  // strategy label
+  const strategyLabels = {
+    all_nullable: '📌 All Nullable (String?)',
+    required: '🔒 All Required',
+    default_values: '🛡️ All @Default',
+    smart: '🧠 Smart Mixed',
+  };
+  document.getElementById('strategyLabel').textContent = strategyLabels[strategy] || '';
+  document.getElementById('strategyBadge').style.display = 'flex';
+
   // render files
   const grid = document.getElementById('filesGrid');
   grid.innerHTML = '';
 
+  // ✅ Store all generated codes in a global map — avoids inline string escaping issues
+  window._generatedCodes = {};
+
   models.forEach((model, i) => {
-    const code = generateModel(model, models, importPath);
+    const code = generateModel(model);
     const fileName = toSnakeCase(model.className) + '.dart';
+
+    // ✅ Store code by index — never pass code as inline onclick string
+    window._generatedCodes[i] = code;
 
     const card = document.createElement('div');
     card.className = 'file-card';
     card.style.animationDelay = `${i * 60}ms`;
 
+    // ✅ Use data-index attribute instead of embedding code in onclick
     card.innerHTML = `
       <div class="file-header">
         <span class="file-name">📄 ${fileName}</span>
-        <button class="copy-btn" onclick="copyCode(this, \`${escapeBt(code)}\`)">copy</button>
+        <button class="copy-btn" data-index="${i}" onclick="copyByIndex(this)">copy</button>
       </div>
       <div class="file-code">${highlight(code)}</div>
     `;
@@ -735,8 +850,36 @@ function generate() {
   document.getElementById('outputSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function escapeBt(str) {
-  return str.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+// ✅ Copy using index — no string escaping issues ever
+function copyByIndex(btn) {
+  const index = parseInt(btn.getAttribute('data-index'));
+  const code = window._generatedCodes[index];
+  if (!code) return;
+
+  navigator.clipboard.writeText(code).then(() => {
+    btn.textContent = '✓ copied';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'copy';
+      btn.classList.remove('copied');
+    }, 2000);
+  }).catch(() => {
+    // fallback for browsers that block clipboard
+    const ta = document.createElement('textarea');
+    ta.value = code;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = '✓ copied';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'copy';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
 }
 
 // ─── Syntax Highlight ─────────────────────────────────────────────────────────
@@ -755,10 +898,7 @@ function copyCode(btn, code) {
   navigator.clipboard.writeText(code).then(() => {
     btn.textContent = '✓ copied';
     btn.classList.add('copied');
-    setTimeout(() => {
-      btn.textContent = 'copy';
-      btn.classList.remove('copied');
-    }, 2000);
+    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 2000);
   });
 }
 
@@ -772,14 +912,30 @@ function copyCmd(btn) {
 }
 
 function copyAll() {
-  const cards = document.querySelectorAll('.file-card');
+  // ✅ Use stored codes — not DOM text (which has HTML entities)
+  if (!window._generatedCodes) return;
+
   let all = '';
-  cards.forEach(card => {
-    const name = card.querySelector('.file-name').textContent;
-    const code = card.querySelector('.file-code').textContent;
+  const cards = document.querySelectorAll('.file-card');
+  cards.forEach((card, i) => {
+    const name = card.querySelector('.file-name').textContent.trim();
+    const code = window._generatedCodes[i] || '';
     all += `// ═══ ${name} ═══\n${code}\n\n`;
   });
+
   navigator.clipboard.writeText(all).then(() => {
+    const btn = document.querySelector('.copy-all-btn');
+    btn.textContent = '✓ All Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy All'; }, 2000);
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = all;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
     const btn = document.querySelector('.copy-all-btn');
     btn.textContent = '✓ All Copied!';
     setTimeout(() => { btn.textContent = '📋 Copy All'; }, 2000);
